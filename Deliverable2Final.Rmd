@@ -1,0 +1,397 @@
+---
+title: "Deliverable 2.0"
+author: "Aleix Pérez, Adrián Jaen"
+date: "4/7/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Carreguem la mostra i biblioteques...
+```{r,}
+r = getOption("repos")
+r["CRAN"] = "http://cran.us.r-project.org"
+options(repos = r)
+install.packages("weatherData")
+
+rm(list=ls())
+
+setwd("/Users/aleixperezvidal/Desktop/ADEI")
+load("/Users/aleixperezvidal/Desktop/ADEI/dadesnetes.RData")
+
+
+# Load Required Packages: to be increased over the course
+options(contrasts=c("contr.treatment","contr.treatment"))
+requiredPackages <- c("missMDA","effects","FactoMineR","car", "factoextra","RColorBrewer","ggplot2","dplyr","ggmap","ggthemes","knitr","NbClust") 
+missingPackages <- requiredPackages[!(requiredPackages %in% installed.packages()[,"Package"])]
+#install.packages("FactoMineR")
+if(length(missingPackages)) install.packages(missingPackages)
+lapply(requiredPackages, require, character.only = TRUE)
+```
+
+# Principal Component Analysis
+Primer de tot, tindrem en compte totes les variables numèriques per veure quines s'allunyen del que estem buscant..
+```{r,cache=TRUE}
+#agafo totes les variables numèriques i trec f.sex,f.clossi , pq es una variable binària 
+num_cols <- unlist(lapply(df, is.numeric))
+df$vars_num <- df[ , num_cols] 
+df$vars_num <- df$vars_num[-c(7,9,10)] 
+summary(df$vars_num)
+
+res.pca<-PCA(df$vars_num,quanti.sup=6)
+summary(res.pca, nb.dec = 2, ncp = 4, nbelements = 3, nbind=0)
+
+# I. Eigenvalues and  axes. How many axes we have to interpret? 
+res.pca$eig
+df$vars_num <- df$vars_num[-c(2)]#trec finalweight
+res.pca<-PCA(df$vars_num,quanti.sup=5) #faig PCA de nou
+summary(res.pca)
+sum(res.pca$eig[,1])
+barplot(res.pca$eig[,1],main="Eigenvalues",names.arg=paste("dim",1:nrow(res.pca$eig)))
+fviz_eig(res.pca, choice = "eigenvalue", addlabels=TRUE)
+res.pca$eig 
+df <- df[-c(31)]
+```
+## I. Eigenvalues and  axes. How many axes we have to interpret? 
+Observant el gràfic d'eigenvalors, concretament el de les fletxes en una circumfèrencia, podem concloure que la variable finalweight no té relació amb cap de les restants, ja que per una banda no està a prop d'una altra variable i a més, si es mira amb detall, no té cap relació inversa amb education-num i age. Seguint la mateixa regla de tres capital.loss podria ser una altra a eliminar, però creiem que capital.loss pot ser encara útil per a nosaltres.També notem relació entre capital.gain i capital.var, cosa que ens pot interessar. Addicionalment, les variables education-num i age estan molt relacionades,encara que no es necessita programar per saber-ho...
+
+Seguint la regla de Kaiser -la que ens aconsella que ens quedem amb els components superiors a 1- veiem que podem agafar 2 components, pero ens quedarem amb el 64.0% de la mostra.L'eigenvalor de la tercera component es queda a 0.973, molt proper a 1, a més si la tenim en compte disposarem del 83,5% de la mostra, on complirem la regla del 80%. (No se com explicar la de elbow perque aqui no la podem aplicar). Amb tot això, hem decidit que treballarem amb 3 components.
+
+
+
+
+## PCA amb variables adicionals i treballant amb les components que hem seleccionat
+```{r PCA, echo=TRUE,cache=TRUE}
+
+vars_con<-names(df)[c(1,5,11:13,24)]
+res.pca<-PCA(df[,c(vars_con,"Y.bin","f.hours","f.age","f.marital","relationship","f.edu")],quanti.sup=5, quali=7:12,ncp=3 )
+summary(res.pca, nb.dec = 2, ncp = 3, nbelements = 30, nbind=0)
+
+# Let us understand how to customize pca object plotting
+
+plot(res.pca,choix="ind", cex=0.5, col.ind="grey80",label="quali")
+
+# To better understand the axes through the extreme individuals
+
+rang<-order(res.pca$ind$coord[,1],decreasing = T)
+length(rang)
+res.pca$ind$coord[rang[1:10],1]
+df[rang[1:10],vars_con]
+
+rang<-order(res.pca$ind$coord[,2],decreasing = T)
+length(rang)
+res.pca$ind$coord[rang[1:10],2]
+df[rang[1:10],vars_con]
+
+fviz_pca_ind(res.pca, col.ind="contrib", geom = "point", gradient.cols = c("white", "yellow", "red" ))
+```
+## II.Individuals point of view
+
+Si ens parem a veure els individus que contribueixen més a l'eix més significatiu, és a dir, els que estan més lluny de l'origen de coordenades, observem una curiosa similitud: tots han guanyat el mateix: 27828 dòlars,quasi en tota la seva totalitat han estudiat més de 10 anys, l'edat i les hours per week no segueixen una estructura tan regular, encara que es podria dir potser també el mateix amb education-num.
+
+D'altre banda, al segon eix, els nostres individus són persones que totes han perdut capital i, majoritàriament, d'una edat avançada.
+
+
+### III. Interpreting the axes:  Variables point of view
+```{r,cache=TRUE}
+### III. Interpreting the axes:  Variables point of view
+### coordinates, quality of representation, contribution of the variables  ###
+###
+res.pca<-PCA(df[,c(vars_con,"Y.bin","f.hours","f.age","f.marital","relationship","f.edu")],quanti.sup=5, quali=7:12,ncp=3 )
+round(cbind(res.pca$var$cos2[,1:2],res.pca$var$contrib[,1:2]),2)
+# dimdes easies this description from the variables
+#dimdesc(res.pca,axes=1:2)
+###
+
+plot.PCA(res.pca,choix=c("var"))
+plot.PCA(res.pca,choix=c("var"),axes=c(1,2))
+
+# Use modern ggplot facilities
+
+fviz_pca_var(res.pca, col.var="cos2",repel=TRUE)+
+    scale_color_gradient2(low="green", mid="blue", 
+    high="red", midpoint=0.75)+theme_bw()
+
+```
+### coordinates, quality of representation, contribution of the variables  
+
+Observant el gràfic del cosinus quadrat distribuit per colors -concretament la funció _fviz_pca_var_+ _scale_gradient_-ens resulta molt mes clar determinar quines són les variables que tenen més importància. Tenint en compte que el cosinus quadrat més proper a 1 -color vermell-, i en contrapartida el color verd com a zero, deduim que les variables relacionades amb el capital, remarcant capital.var com la que més, són les que tenen una major significància en el nostre estudi. Altrament, fent un ull a les variables categòries que hem passat com a auxiliars, podem afirmar que els perfils que contribueixen en una major mesura són:
+* Persones que guanyen més de 50 mil dòlars a l'any                      
+* Persones amb edat compresa entre 40 i 90 anys              
+* Persones amb estudis de Postgrau
+* Persones amb estudis posteriors a School (com la secundària)
+* Persones casades
+                 
+
+
+
+
+## Clustering
+### K-Means
+Vam estar donant moltes voltes a l'hora d'escollir el nombre de clústers òptim. Com que no existeix una manera exacta de fer-ho, vam buscar diferents "opinions". La primera que vam triar va ser el test _NbClust_, de la llibreria que té el mateix nom, conegut per no ser el més ràpid en proporcionar-te el veredicte, sinó totalment al contrari. Després d'un quart d'hora ens _va dir_ el següent:
+
+* Among all indices:                                                
+
+* 8 proposed 2 as the best number of clusters 
+
+* 5 proposed 3 as the best number of clusters 
+
+* 1 proposed 4 as the best number of clusters 
+
+* 5 proposed 5 as the best number of clusters 
+
+* 2 proposed 6 as the best number of clusters 
+
+* 2 proposed 7 as the best number of clusters 
+
+* 1 proposed 10 as the best number of clusters 
+
+* Conclusion:                           
+ 
+* According to the majority rule, the best number of clusters is  2 
+
+Però amb el gràfic del PCA a la mà veiem que només separar en 2 clústers no ens ajudarà gaire. No osbtant, el segon candidat a millor número de clústers és de 3. Té una mica més de sentit, encara que gràficament no acaba d'agrupar com ens agradaria. Finalment, i amb el recolzament d'un altre mètode, el del sumatori dels quadrats de les distàncies, hem decidit d'organitzar-ho en quatre, ja que observem una mena de "colze", a partir de k = 4. D'altra banda, observem que els centres dels clústers 1 i 3 estan massa a prop... Però potser el _catdes_ ens revela diferències significatives entre aquests dos.
+```{r,cache=TRUE}
+res.pca<-PCA(df[,c(vars_con,"Y.bin","f.hours","f.age","f.marital","relationship","f.edu")],quanti.sup=5, quali=7:12,ncp=3 )
+my_data <- res.pca$ind$coor[,1:3 ]   # Take scores (principal components) as many dimensions as selected
+fviz_nbclust(my_data, kmeans, method = "wss")
+
+#vamos a comprobar el número de clusters adecuados a través de la interpretación gráfica
+
+df$cluster3 = factor(kmeans(my_data,3)$cluster);
+df$cluster4 = factor(kmeans(my_data,4)$cluster);
+
+res.pca<-PCA(df[,c(vars_con, "cluster3")],quanti.sup=5, quali=7,ncp=3 )
+plot.PCA(res.pca,choix="ind",habillage=7,select=0 ,cex=0.75)
+res.pca<-PCA(df[,c(vars_con, "cluster4")],quanti.sup=5, quali=7,ncp=3 )
+plot.PCA(res.pca,choix="ind",habillage=7,select=0 ,cex=0.75)
+
+#df <- df[-c(31)] 
+names(df)
+
+catdes(df, 32, proba = 0.05) 
+
+# library("NbClust") 
+# res.nbclust <- NbClust(my_data, distance = "euclidean",
+#                   min.nc = 2, max.nc = 10,
+#                   method = "complete", index ="all")
+
+```
+## Descripció dels clústers
+* El primer clúster representa un perfil de persona, major de 50 anys, que no té estudis superiors, que probablement el seu país d'origen no és els Estats Units. Les feines a on treballa són de baixa responsabilitat i de la conseguent manera amb sous baixos, ja que estan per sota el llindar dels 50000 dòlars l'any.
+
+* El segon clúster representa un perfil de persona, probablement entre 40 i 50 anys, casada i amb ingressos majors a 50 mil dòlars l'any. Aquesta persona podem afirmar que té estudis superiors, i treballa en un sector professional o d'autònom, amb més responsabilitat que el primer clúster.
+
+* El tercer clúster representa un perfil de persona més jove als dos grups mencionat anteriorment, aproximadament sobre la trentena, encara que presenta certa ambigüitat. Són individus que tenen estudis superiors a la secudària i en la gran majoria tenen fills, encara que no superen el llindar d'ingressar 50 mil dòlars l'any.
+
+* El quart clúster representa un perfil de persona amb edat similar al primer grup, però casada i amb estudis superiors. La seva ocupació, es pot dir amb un alt grau de certesa que pertany en un sector benestant, són feines amb sous alts, per això ingressen a l'any més de 50 mil dòlars.
+
+
+# Hierarchical clustering
+```{r}
+res.pca<-PCA(df[,c(vars_con,"Y.bin","f.hours","f.age","f.marital","relationship","f.edu")],quanti.sup=5, quali=7:12,ncp=3 )
+res.hcpc<-HCPC(res.pca,order=TRUE, nb.clust = 4)
+attributes(res.hcpc)
+summary(res.hcpc$data.clust)
+attributes(res.hcpc$desc.var)
+
+# Factors globally related to clustering partition
+res.hcpc$desc.var$test.chi2
+
+# Categories over/under represented in each cluster
+res.hcpc$desc.var$category
+
+# Numeric variables globally related to clustering partition
+res.hcpc$desc.var$quanti.var
+res.hcpc$desc.var$quanti
+
+```
+## Descripció dels clústers
+* El primer clúster representa una persona casada de mitjana edat amb ingressos més elevats que 50 dòlars l'any, i normalment amb estudis superiors.
+* El segon clúster representa una persona més jove que l'anterior grup, encara que també majoritàriament amb estudis superiors. Una altra diferència es que amb molta probabilitat disposa menys de 50 dòlars a l'any pel que fa als ingressos.
+* El tercer clúster, a l'hora d'observar el gràfic, veiem que està a la mateixa zona que el segon, per tant podem afirmar que disposem d'informació molt ambigua per poder treure-hi quelcom de profit...
+* El quart clúster representa una persona de mitjana edat amb ingressos superiors a 50 mil dòlars l'any, graduada i majoritàriament són esposes, és a dir, que son més dones que homes.
+
+
+
+
+
+
+# Correspondence Analysis
+```{r}
+#Abans de realitzar el Ca, hem de refactoritzar el target numeric 'hours per week' a 7 nivells
+df$f.hpw<-factor(cut(df$hours.per.week,breaks=c(0,10,20,30,40,50,60,80),include.lowest = T))
+
+# CA HOURS PER WEEK vs OCCUPATION
+names(df)
+tt<-ftable(xtabs(~f.hpw+f.occ,data=df))
+chisq.test(tt)
+
+
+
+table(df[,c(33,26)])
+summary(df[,c(33,26)])
+res.ca<-FactoMineR::CA(table(df[,c(33,26)]))
+summary(res.ca, nb.dec = 2, ncp = 2)
+par(cex=0.8)
+res.ca$eig
+
+
+#CA HOURS PER WEEK vs EDUCATION NUM
+tt<-ftable(xtabs(~f.hpw+f.edu,data=df))
+chisq.test(tt)
+
+
+
+table(df[,c(33,17)])
+summary(df[,c(33,17)])
+res.ca<-FactoMineR::CA(table(df[,c(33,17)]))
+summary(res.ca, nb.dec = 2, ncp = 2)
+par(cex=0.8)
+
+```
+### CA HOURS PER WEEK vs OCCUPATION
+* Podem veure que el p-valor és bastant petit i la chi square és gran, per tant podem dir que les dues variables estan relacionades, el que es tradueix en que depen del tipus de treball es realitzen una quantitat d'hores setmanals major o menor.
+* Si observem els Eigenvalues, veiem que amb dues dimendions tenim el 99.82% de la mostra, per tant aquest és el número de dimensions que agafem.
+
+### CA HOURS PER WEEK vs EDUCATION NUM
+* Igual que en el cas anterior, podem veure que les dues variables estan relacionades ja que el p-valor és molt petit i la chi square es relativament gran.
+En aquest cas, seguint el mateix criteri que en el cas anterior, també agafem dues dimensions.
+
+
+
+
+
+# Multiple Correspondence Analysis
+```{r}
+names(df)
+res.mca <- MCA(df[,c(16:20,22,23,25:27)])
+res.mca <- MCA(df[,c(13,33,15:20,22,23,25:27)],quali.sup=2:3,quanti.sup = 1) 
+summary(res.mca, nb.dec = 2, ncp = 3, nbelements = 30, nbind=0 )
+round(res.mca$eig[,1],4)
+mean(res.mca$eig[,1])
+barplot(res.mca$eig[,1],main="Eigenvalues",names.arg=1:nrow(res.mca$eig))
+
+### Veiem que la mitjana de la variança als Eigenvalues és de 0.1, per tant agafarem 12 axes ja que és el número de dimensions amb una variança major o igual a la esmentada anteriorment.
+
+plot.MCA(res.mca, choix="ind",invisible="ind.sup",habillage=3,label="quali.sup")
+plot.MCA(res.mca, choix="ind",invisible=c("quali.sup","var"))
+
+# Contribution of individuals to the dimensions
+ind <- get_mca_ind(res.mca)
+head(ind$contrib)
+fviz_contrib(res.mca, choice = "ind", axes = 1:5, top = 20)
+```
+## Multiple Correspondence Analysis
+### Observacions
+Podem veure que el target numeric hours per week està inversament relacionat amb la primera dimensió, però en canvi esta molt relacionat de forma positiva amb la segona dimensió.
+
+* En quant a la primera dimensió es pot apreciar que els individus tenen una clara tendència a treballar entre 30 i 40 hores setmanals, en la majoria dels casos treballen al sector privat, i el seu salari sol ser inferior a 50k$. També podem veure que son individus amb un nivell d'educació relativament elevat ja que la majoria són a HS-graduated o han realitzan estudis posteriors. D'altra banda,els perfils més extrems serien les persones amb edat inferior a 30 anys, solters i/o sense parella, i foranis als Estats Units.
+
+
+# Hierarchical Clustering
+
+## HCPC from MCA
+
+```{r}
+res.mca <- MCA(df[,c(13,33,15:20,22,23,25:27)],quali.sup=2:3,quanti.sup = 1) 
+res.hcpc<-HCPC(res.mca,nb.clust=4,order=TRUE)
+
+
+### Interprete the results of clustering ###
+names(res.hcpc)
+
+### Counts of individuals in each cluster ###
+summary(res.hcpc$data.clust$clust)
+### desc.var ###
+### A. The description of the clusters by the variables ###
+names(res.hcpc$desc.var)
+
+### desc.var$test.chi2 ###
+### A.1. The categorical variables which characterizes the clusters ###
+res.hcpc$desc.var$test.chi2
+
+### desc.var$category ###
+### A.2. The description of each cluster by the categories ##
+res.hcpc$desc.var$category
+
+### desc.var$quanti.var ###
+### A.3. The quantitative variables which characterizes the clusters ###
+res.hcpc$desc.var$quanti.var
+
+### desc.var$quanti ###
+### A.4. The description of each cluster by the quantitative variables ###
+res.hcpc$desc.var$quanti
+
+### desc.axes ###
+### B. The description of the clusters by the axes ###
+names(res.hcpc$desc.axes)
+res.hcpc$desc.axes$quanti.var
+res.hcpc$desc.axes$quanti
+
+summary(res.hcpc$data.clust)
+
+### desc.ind ###
+### C. The description of the clusters by the individuals ###
+names(res.hcpc$desc.ind)
+res.hcpc$desc.ind$para
+res.hcpc$desc.ind$dist
+
+
+#### Characteristic individuals
+para1<-which(rownames(res.mca$ind$coord)%in%names(res.hcpc$desc.ind$para[[1]]))
+para2<-which(rownames(res.mca$ind$coord)%in%names(res.hcpc$desc.ind$para[[2]]))
+para3<-which(rownames(res.mca$ind$coord)%in%names(res.hcpc$desc.ind$para[[3]]))
+para4<-which(rownames(res.mca$ind$coord)%in%names(res.hcpc$desc.ind$para[[4]]))
+
+dist1<-which(rownames(res.mca$ind$coord)%in%names(res.hcpc$desc.ind$dist[[1]]))
+dist2<-which(rownames(res.mca$ind$coord)%in%names(res.hcpc$desc.ind$dist[[2]]))
+dist3<-which(rownames(res.mca$ind$coord)%in%names(res.hcpc$desc.ind$dist[[3]]))
+dist4<-which(rownames(res.mca$ind$coord)%in%names(res.hcpc$desc.ind$dist[[4]]))
+
+res.hcpc$data.clust[which(rownames(res.hcpc$data.clust)%in%names(res.hcpc$desc.ind$para[[1]])),]
+res.hcpc$data.clust[which(rownames(res.hcpc$data.clust)%in%names(res.hcpc$desc.ind$dist[[1]])),]
+res.hcpc$data.clust[which(rownames(res.hcpc$data.clust)%in%names(res.hcpc$desc.ind$para[[2]])),]
+res.hcpc$data.clust[which(rownames(res.hcpc$data.clust)%in%names(res.hcpc$desc.ind$dist[[2]])),]
+res.hcpc$data.clust[which(rownames(res.hcpc$data.clust)%in%names(res.hcpc$desc.ind$para[[3]])),]
+res.hcpc$data.clust[which(rownames(res.hcpc$data.clust)%in%names(res.hcpc$desc.ind$dist[[3]])),]
+res.hcpc$data.clust[which(rownames(res.hcpc$data.clust)%in%names(res.hcpc$desc.ind$para[[4]])),]
+res.hcpc$data.clust[which(rownames(res.hcpc$data.clust)%in%names(res.hcpc$desc.ind$dist[[4]])),]
+```
+
+# Descripció dels clusters i comparació amb els targets
+
+#### Cluster 1 
+En aquest cluster podem veure que la gran majoria dels individus són homes casats, amb un salari superior a 50k dollars. També podem observar que el 90% dels individus que formen part d'aquest cluster són de raça blanca i dels Estats Units.
+Els individus més característics en la gran majoria no treballen més de 25 hores a la setmana (de mitjana 23.5), i tots els que treballen sota les 25 hores setmanals no arriben a 50 mil dòlars l'any.
+
+#### Cluster 2 
+Aquest cluster està composat en un 90% per individus joves de fins a 30 anys, els quals en general no estan casats i tenen un salari inferior a 50k dollars. En aquest cas podem veure que el génere no es un factor determinant ja que està bastant equilibrat entre homes i dones, però en quant al que respecta al pais d'orígen veiem que, igual que en el clúster 1, la gran majoria dón dels Estats Units.
+Els individus més característics majoritàriament tenen entre 30 i 40 anys, i tenen un origen entre Europa o Àsia.També tenen un salari inferior als 50k dollars.Les hores a la setmana mitjanes són de 26.5.
+
+#### Cluster 3 
+És un cluster composat principalment per persones que han estat casades en el passat però que ara estan solteres. Igual que en el cluster anterior, els individus son en la gran majoria nord-americans i tenen un salari inferior als 50k dollars anuals.
+Observant els individus més característics, les hores a la setmana mitjanes són de 26.1.
+
+#### Cluster 4 
+En aquest cluster podem veure que tots els individus són de fora dels Estats Units, concretament d'Europa o Asia i la raça d'aquests individus està bastant dividida entre blanca i asiàtica.
+Observant els individus més característics, les hores a la setmana mitjanes són de 28.2.
+
+## Comparison between PCA and MCA clusters focusing on binary target
+* En el cas del cluster número 1, podem veure una gran diferència entre els resultats obtinguts entre PCA i MCA ja que tenim individus d'un perfil totalment diferent, si ens fixem en els individus obtinguts amb PCA, veiem que tenen un salari inferior a 50k$ i amb un país d'origen que no son els Estats Units, mentre que al primer cluster de MCA ens trobem amb tot lo contrari.
+* En el cas del segon cluster, si mirem els resultats obtinguts amb MCA veiem que el perfil de l'individu equival a una persona d'edat mitjana amb un salari elevat, mentre que en el cas de MCA equival a un individu jove amb un salari inferior al target.
+* En aquest tercer cluster podem veure que en ambós casos els individus tenen un sou inferior als 50k dollars anuals, encara que el perfil dels individus es bastant diferent.
+* Per últim, veiem que al quart cluster tenim resultats similars als que hem vist al primer cluster, però invertits. És a dir, en aquest cas amb PCA trobem individus dels Estats Units amb salaris elevats mentre que amb MCA trobem individus de fora dels Estats Units amb salaris més reduïts.
+
+## Comparison between PCA and MCA clusters focusing on duration target
+* En aquest cas, els resultats trobats son molt similars en practicament tots els clusters. En le primer cluster veiem que en tots dos casos tenim un nombre d'hores bastant elevat arribant inclus en alguns casos a les 80 hores.
+* En el segon cluster veiem en tots dos casos que les hores son properes a la jornada completa, encara que en el cas de MCA, al trobar un perfil més jove, tenim casos amb hores setmanals mes baixes.
+* Pel tercer cluster els resultats son similars als del cluster anterior però en aquests cas en tots 2 resultats veiem unes hores setmanas properes a la jornada completa.
+* Per últim, tenim uns resultats similars als del cluster 1, en els que els individus treballen una quantitat d'hores molt elevada, encara que com hem vist abans, els salaris no tenen res a veure.
+
+
+

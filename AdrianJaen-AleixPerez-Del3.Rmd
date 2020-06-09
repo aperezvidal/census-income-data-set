@@ -1,0 +1,472 @@
+---
+title: "Income Census Dataset"
+author: "Aleix Perez & Adrián Jaén"
+date: \today
+output:
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+  html_document:
+    toc: no
+    toc_depth: '4'
+  word_document:
+    toc: yes
+    toc_depth: '4'
+geometry: left=1.9cm,right=1.9cm,top=1.25cm,bottom=1.52cm
+fontsize: 12pt
+subtitle: 'Multiple Linear Regression'
+classoption: a4paper
+editor_options: 
+  chunk_output_type: console
+---
+
+# Primer de tot, carreguem tot el nostre entorn amb les llibreries adients i el corresponent joc de dades
+
+```{r}
+library(car)
+library(FactoMineR)
+library(effects)
+library(lmtest)
+
+# Clear plots
+if(!is.null(dev.list())) dev.off()
+# Remove all objects
+rm(list=ls())
+setwd("/Users/aleixperezvidal/Desktop/ADEI/d3")
+load("/Users/aleixperezvidal/Desktop/ADEI/d3/Dadesnetes.Rdata")
+```
+
+# Target hr.per.week
+## Modelling using numeric variables (covariates)
+Primer de tot, recollirem totes les variables contínues per comprovar quines estan més relacionades amb el target i així poder determinar quines variables utilitzarem per a construir el model. Per poder dur-ho a terme, utilitzarem,com sempre, la comanda condes.
+
+A la seva sortida podem veure les variables més relacionades amb el target numèric, és a dir, aquestes són les variables que utilitzarem a l'hora de generar el nostre model. Un cop generat, també haurem de veure si aquestes variables estan relacionades entre si per a poder generar el model més adient al nostre joc de dades.
+
+La "gràcia", en aquesta part de l'anàlisi, serà escollir entre dos camins: el d'utilitzar per separat capital gain i capital loss, on sobretot aquesta última ens podria generar problemes degut a la seva irregularitat, i d'altra banda, el camí alternatiu que significaria només tenir en compte la combinació dels dos capitals, el capital.var(diferència entre c.gain i c.loss).   
+```{r}
+vars_con<-names(df)[c(1,5,11,12,13,24)]; 
+condes <- condes(df[,vars_con],which(vars_con == "hours.per.week"))
+condes$quanti
+```
+
+Com a resultat del condes podem veure que la variable més relacionada amb el target és "education-num", també veiem que el target està relacionat amb "capital.gain", "capital.loss", "capital.var" i age. Respecte a les variables relacionades amb el capital invertit, nosaltres sabem que capital.var és resultat d'una combinació entre "capital.gain" i "capital.loss", per tant, hi haura una gran colinealitat si utilitzem aquestes tres variables juntes en un mateix model. El que farem per evitar aquesta gran colinealitat és crear dos models diferents, un que utilitzi el factor "capital.var" i un altre que utilitzi "capital.gain" i "capital.loss", i ens quedarem amb el que tingui una explicativitat major.
+
+```{r}
+
+##GENERACIó DEL MODEL
+
+names(df)[5] <- "education.num" #Aqui he canviat el nom de education-num perque el "-" em donava problemes
+
+
+m1<-lm(hours.per.week~education.num+capital.gain+capital.loss+age,data=df)
+
+summary(m1) 
+
+vif(m1) 
+
+Anova(m1)
+
+m2<-lm(hours.per.week~education.num+capital.var+age,data=df) #3.1% de R2 
+summary(m2)
+vif(m2) #no hi ha colinealitat
+
+Anova(m2)
+
+
+# BIC / AIC : Minimum BIC is preferred
+BIC(m1,m2) # Covariate use preferred
+
+```
+El primer model dona una explicabilitat del 3.49%, és una explicabilitat molt baixa. utilitzant la comanda vif podem veure que no hi ha colinealitat entre les variables i utilitzant la comanda Anova veiem que tots els P-value són inferiors a 0'05, per tant, no hem de treure cap variable d'aquest model.
+
+Al segon model, en el qual hem utilitzat "capital.var" en comptes de "capital.gain" i "capital.loss", la explicabilitat és del 3,1%. Aquesta és inferior a la del model anterior, per tant ens quedarem amb el primer model. Si utilitzem la comanda BIC, arribem a la mateixa conclusió ja que el BIC del model m1 és menor.
+
+
+# Transforming variables
+
+A continuació realitzarem la transformació de les variables per intentar aconseguir una major explicabilitat. Per a realitzar això, el primer que fem és consultar les gràfiques resultants de la comanda residualPlots, on veiem que en el cas de la variable "age", els residus tenen un perfil quadràtic.
+
+```{r}
+par(mfrow=c(2,2))
+plot(m1,id.n=0)
+par(mfrow=c(1,1))
+
+# residuals vs each explanatory variable
+residualPlots(m1)  # use order 2 polynomial for age
+
+m3<-lm(hours.per.week~poly(age,2)+education.num+capital.gain+capital.loss,data=df)
+summary(m3) #pugem a R2=15.97, que venint de 3.4 
+
+anova(m1,m3) #comparar models nested
+#dev.off()
+
+m4<-lm(log(hours.per.week)~poly(age,2)+education.num+capital.gain+capital.loss,data=df)
+summary(m4)
+
+BIC(m3,m4)
+
+```
+Com hem comentat anteriorment, els residus de la variable "age" segueixen un perfil quadràtic, per tant hem creat un nou model utilitzant la variable age elevada al quadrat. Això ha sigut tot un éxit ja que la explicabilitat ha passar del 3,4% al 15,97%. Abans de continuar, realitzem un anova entre el model anterior i el nou model i com el P-value és menor a 0'05, podem descartar H0 i dir que no són equivalents.
+
+A continuació, hem creat un nou model utilitzant la funció log al target numèric per veure si d'aquesta manera podem aconseguir millors resultats. Primerament podem veure que realitzant això, aumenta la explicabilitat a un 16'41%, és una millora petita però no despreciable. Posteriorment, hem utilitzat la comanda BIC per a assegurar-nos de que aquest últim model és millor que l'anterior, cosa que podem afirmar amb gairebe plena confiança la que el BIC de l'últim model és molt inferior al del model anterior.
+
+
+# Adding factors as explanatory variables
+
+En aquest apartat afegirem factors al nostre model per tal d'intentar aumentar l'explicabilitat d'aquest. El primer que fem és crear una llista amb tots els factors que tenim a la mostra, i realitzar un condes per veure quins son els factors que estan més relacionats amb el target.
+
+```{r}
+names(df)
+vars_fac_ihours<-names(df)[c(13,16:21,25:26,29)]
+res.condes<-condes(df[,vars_fac_ihours],num.var=1)
+res.condes$quali #f.rel,f.type,f.marital >0.50 ,f.occ 0.25
+
+m5 <- lm(hours.per.week~poly(age,2)+education.num+capital.gain+capital.loss + f.rel + f.type + f.marital + f.occ,data=df)
+summary(m5) #pugem a 21.45% de R2
+vif(m5) #mirem colinealitat, f.rel i marital tenen relacio 
+
+
+
+m5b <- lm(hours.per.week~poly(age,2)+education.num+capital.gain+capital.loss + f.rel + f.type + f.occ,data=df)
+summary(m5b) #pugem a 21.45% de R2
+vif(m5b)#colinealitat fixed
+anova(m5,m5b)#bastant semblants
+BIC(m5,m5b) #el b guanya per poquissim
+
+
+```
+
+A la sortida del condes, podem veure que els factors més relacionats amb el target numèric són "f.rel", "f.type" i "f.marital". Tenint això en compte, creem un model amb els factors més relacionats, encara que sabem que alguns d'aquests factors poden tenir una alta colinealitat, cosa que mirarem próximament.
+
+Un cop creat el model, veiem que la explicabilitat aumenta fins a un 21'45%, però al realitzar la comanda vif podem observar que existeix una gran colinealitat entre "f.marital" i "f.rel", per tant crearem un nou model eliminant "f.marital" ja que a la comanda condes hem vist que està menys relacionat amb el target.
+
+En aquest nou model, si ralitzem la comanda vif, es veu clarament que la colinaelitat ha desaparegut. Posteriorment mirem si els dos models són equivalents, cosa que sembla ser certa ja que el P-value és major de 0'05 i per tant no podem rebutjar H0. Finalment realitzem la comanda BIC per assegurar-nos de quin model és millor.
+
+# Interactions between numeric variables and factors
+
+Finalitzat el model additiu, investigarem si les interaccions suposen una millora respecte al nostre millor model actual.
+
+Primerament, provarem el model amb interaccions entre les variables numèriques i les categòriques.
+
+En primer lloc, realitzem un model en el que apareixen totes les interaccions possibles entre els factors i les variables numèriques. Un cop tenim aquest model, li aplicarem la comanda step per a que la màquina ens indiqui quines son les interaccions més addients (si es que hi han), i comprovarem aquest model que ens proposa la màquina comprovant la seva colinealitat i comparant el BIC amb el nostre millor model anterior.
+
+```{r}
+#afegeixo interaccions
+Anova(m5b)
+
+m6 <- lm(log(hours.per.week)~(poly(age,2)+education.num+capital.gain+capital.loss) * (f.rel + f.type + f.occ),data=df)
+summary(m6) #23.46
+
+m7<-step(m6,k=log(nrow(df)),trace = 0)
+summary(m7) 
+Anova(m7)
+vif(m7)
+BIC(m7, m5b)
+
+```
+Com es pot veure, al realizar les interaccions entre totes les variables i tots els factors, la explicabilitat ha aumentat fins al 23,46%. Un cop realitzada la comanda step, aquesta explicabilitat ha baixat fins al 22'12%, encara que sembla que aquest model es millor que l'anterior ja que té un BIC més baix.
+
+# Interactions between factors
+
+Un cop hem afegit les interaccions entre variables i factors necessàries per a millorar el nostre model, procedim a realitzar el mateix procediment però, en aquest cas, les interaccions són entre factors.
+
+```{r}
+
+m8<-lm(log(hours.per.week) ~ poly(age, 2) + capital.gain + poly(age, 2):f.rel + poly(age, 2):f.type + (f.rel + f.type)*(f.occ), data = df)
+summary(m8)
+
+m9<-step(m8,k=log(nrow(df)),trace = 0)
+#summary(m9)
+# Call:
+# glm(formula = Y.bin ~ poly(age, 2) + education.num + capital.gain + 
+#     capital.loss + poly(hours.per.week, 2) + f.rel + f.occ, family = binomial, 
+#     data = dfwork)
+```
+Un cop realitzada la comanda step sobre el model que conté les interaccions entre factors, veiem a la sortida que no s'ha d'aplicar cap d'aquestes interaccions, i per tant, que el model m7 és el nostre millor model.
+
+# Validation
+
+```{r}
+par(mfrow=c(2,2))
+plot(m7)
+```
+
+Analitzant els gràfics:
+*Residual VS Fitted*: Auquest gràfic mostra els residus dels valors predits. Lo dessitjable és que els punts estiguin uniformement dispersos, per poder-ho contrastar el gràfic ens mostra una recta smoother que convé que sigui horitzontal i uniforme. Tot i que podem veure un patró al gràfic, podem dir que el resultat no és acceptable.
+*Normal Q-Q*: Aquest plot ens mostra la tendència a una distribució normal dels residus, ens mostra una línia diagonal de referència a la que s'espera que els residus s'ajustin el màxim possible. En el nostre cas podem veure grans desviacions als extrems.
+*Scale-Location*: Aquest plot fa referència a la variança dels valors de la predicció, si es manté constant implica homocedasticitat, en cas contrari heterodasticitat que es veuria reflexada en un núvol de punts en forma cónica. En el nostre cas, el gràfic mostra una forma cònica.
+*Residuals Vs Leverage*: Veiem que hi ha un individu amb molt leverage, el 11513. Utilitzarem el influencePlot per poder veure amb més detalls els individus influents.
+
+```{r}
+par(mfrow=c(1,1))
+influencePlot(m7)
+which(row.names(df)==11513)
+which(row.names(df)==32526)
+
+
+marginalModelPlots(m7)
+
+```
+
+- InfluencePLot: Ens mostra els individus més influents, això es pot veure gràficament a través del radi de les circunferències. En el nostre cas podem veure que hi ha individus bastant influents, el 1773 i el 4951.
+
+- MarginalModelPlot: Ens mostra les discrepàncies entre les prediccions del nostre model i els resultats reals de les nostres observacions desglosat per variables, utilitza dues línies de soport, una vermella per la tendència del model i una altra blava referent a cada variable. Podem veure que, pel nostre model, les línies de soport tenen una mica de desviació entre elles però res rellevant.
+
+Treballem amb el millor model obtingut i veiem quins individus influeixen més en les nostres dades per saber si estan afectant al nostre resultat.
+
+```{r}
+Boxplot(cooks.distance(m7))
+
+```
+Considerem que hi ha un individu que repercuteix massa als resultats, 1773. 
+
+```{r}
+
+m10 <- lm(log(hours.per.week) ~ poly(age, 2) + capital.gain + f.rel + f.type + f.occ + poly(age, 2):f.rel + poly(age, 2):f.type,data=df[c(-1773,-1951,-2116),])
+
+Boxplot(cooks.distance(m10))
+
+summary(m10)
+
+```
+
+Podem veure que el nou model sense els individus més influents, veu reduïda la seva explicabilitat respecte al model anterior, tot i que de forma gairebé despreciable ja que es un 0'01%.
+
+# Modelització amb target binari
+Com ens demana l'enunciat, separarem aleatòriament el nostre dataset en dues parts: el 80 per cent de la mostra ens servirà per treballar i desenvolupar el model més adient (dfwork), i el 20 per cent restant ens servirà per comprovar la robustesa del nostre model final.
+Ara bé, el que utilitzarem ara és un model lineal general amb un target binari,per tant de familia binomial.
+
+```{r}
+# 80% to Working Set and 20% Test
+set.seed(19081998)
+ll<-sample(1:nrow(df),nrow(df)*0.8) 
+ll<-sort(ll)
+dfwork<-df[ll,]
+dftest<-df[-ll,]
+```
+
+Primerament reunirem les variables explicatives necessàries per començar el modelatge. Ho realitzarem mitjançant el catdes. A la sortida veurem les numèriques més relacionades amb el nostre target, per ordre de més a menys.
+
+```{r}
+names(dfwork)[5] <- "education.num" 
+vars_exp<-names(dfwork)[c(1,5,11,12,15,24)] 
+catd <- catdes(dfwork[,c("Y.bin",vars_exp)],1)
+catd$quanti.var
+```
+
+
+# Comencem el modelatge
+Ara que ja tenim les variables numèriques que expliquen millor el nostre target, crearem el nostre primer model amb dues variants; una amb capital.gain i capital.loss, i una altra amb la combinació de les dos, capital.var:
+```{r}
+#Busquem el model
+
+m1<-glm(Y.bin~age+education.num+capital.gain+capital.loss+hours.per.week,family=binomial,data=dfwork)
+summary(m1) #capital gain i loss
+m1b <- glm(Y.bin~age+education.num+capital.var+hours.per.week,family=binomial,data=dfwork)
+summary(m1b) #capital var
+BIC(m1,m1b)
+```
+Com es pot observar no presenta grans diferències, tot i que la residual deviance es inferior
+al primer model amb capital.gain i capital.loss. Fent un BIC succeeix el mateix; m1 és un pel més baix que m1b.
+
+# Model de regressió polinòmica
+
+```{r}
+m2<-glm(Y.bin ~ poly(age,2) + poly(education.num,2) + poly(capital.gain, 2) + poly(capital.loss, 2) + poly(hours.per.week,2), family=binomial,data=dfwork)
+
+summary(m2)
+vif(m2)
+
+m3<-glm(Y.bin ~ poly(age,2) + education.num + poly(capital.gain, 2) + capital.loss + poly(hours.per.week,2), family=binomial,data=dfwork)
+summary(m3)
+vif(m3)
+
+BIC(m1,m2,m3) #millor m3
+marginalModelPlots(m3)
+residualPlots(m3)
+Anova(m3,test="LR")
+
+marginalModelPlots(m3)
+```
+El primer que hem fet ha sigut crear un model de prova amb totes les variables al quadrat, un cop tenim aquest model, al summary podem veure que es pot ometre el terme quadràtic de "education.num" i "capital.loss". Creem el nou model ometent els termes quadràtics comentats anteriorment, i comprovem quin és el millor model, com era d'esperar, l'últim és el millor.
+
+Finalment realitzem la comanda marginalModelPlots per comprovar si, amb les transformacions realitzades, les observacions s'ajusten a la predicció, cosa que podem veure que es compleix perfectament.
+
+# Modelització amb variables contínues i categòriques
+
+```{r}
+names(dfwork)
+vars_fac<-names(dfwork)[c(15:30)] 
+cat <- catdes(dfwork[,c("Y.bin",vars_fac)],1)
+cat$test.chi2
+#afegim tot primer, a ver q passa (f.edu NO es el factor de education.num)
+m4<-glm(Y.bin ~ poly(age,2) + education.num + capital.gain + capital.loss + poly(hours.per.week,2)+ (f.rel+f.marital+f.edu+f.occ+f.type+f.race+f.cont), family=binomial,data=dfwork)
+summary(m4)
+anova(m3,m4,test="Chisq")  # Adding factors improves
+Anova(m4,test="LR") #sembla que f.marital,f.edu i f.race molesten
+
+m5<-glm(Y.bin ~ poly(age,2) + education.num + capital.gain + capital.loss + poly(hours.per.week,2)+ (f.rel+f.occ+f.type), family=binomial,data=dfwork)
+
+
+#"netegem" amb l'step
+m6<-step(m5,k=log(nrow(dfwork)),trace = 0)
+anova(m6,m5,test="Chisq")
+BIC(m5,m6)
+Anova(m6,test="LR") #tot net i polit
+vif(m6) #tot ok tambe
+summary(m6) #residual deviance ja és més baixa que els graus de llibertat
+
+```
+El primer que fem es un catdes per veure quins són els factors més relacionats amb el target binari. Un cop realitzat aquest catdes, seleccionem els factors més relacionats amb Y.bin i els afegim al nostre model.
+
+A través del summary podem veure quins d'aquests factors hem d'eliminar del nostre model, ho fem i posteriorment apliquem un step per deixar el model el més net possible. Un cop netejat el model comprovem que no hi ha colinealitat i que els P-value són correctes.
+
+# Adding Interactions
+
+Un cop hem afegit els factors necessaris al nostre model, procedim a afegir interaccions per comprovar si així podem millorar aquest model.
+
+El primer que farem és crear un model amb totes les interaccions possibles entre les variables numèriques i els factors. Un cop tinguem aquest model, el validarem amb la comanda step i comprovarem si realment és necessari afegir interaccions, i en cas de que ho sigui, quines interaccions són les correctes.
+```{r}
+m7<-glm(Y.bin ~ (poly(age, 2) + education.num + capital.gain + 
+    capital.loss + poly(hours.per.week, 2)) * (f.rel+f.occ+f.type), family = binomial, 
+    data = dfwork)
+summary(m7)
+#m5b <- glm(Y.bin ~ poly(age, 2) + education.num + capital.gain + 
+  #  capital.loss + poly(hours.per.week, 2) * (f.rel), family = binomial, 
+   # data = dfwork)
+
+m8<-step(m7,k=log(nrow(dfwork)),trace = 0)
+#summary(m8) 
+# Call:
+# glm(formula = Y.bin ~ poly(age, 2) + education.num + capital.gain + 
+#     capital.loss + poly(hours.per.week, 2) + f.rel + f.occ, family = binomial, 
+#     data = dfwork)
+vif(m8) 
+BIC(m6,m7,m8)
+marginalModelPlots(m8)
+#provem terme cubic
+m9 <- glm(Y.bin ~ poly(age, 2) + education.num + poly(capital.gain,3) + capital.loss + 
+    poly(hours.per.week, 2) + f.rel + f.occ, family = binomial, 
+    data = dfwork)
+summary(m9)
+vif(m9)
+anova(m9,m8)
+BIC(m9,m8)
+Anova(m9,test="LR") #m7 is the best model
+
+residualPlots(m9)
+marginalModelPlots(m9)
+```
+Com es pot comprovar a la sortida, hem creat el model amb totes les interacions possibles entre variables i factors, i hem "netejat" aquest model amb la comanda step. Aquesta validació ens diu que no és necessaria cap interacció d'aquest tipus en el nostre model, i per tant, ens hem quedat amb el model anterior com a millor model. Posteriorment hem vist al marginalModelPlots que el capital.gain no s'ajustava del tot a la predicció, per tant, hem provat de canviar el aquest terme quadràtic per un terme cúbic, cosa que ha semblat ser un éxit.
+
+# Adding interactions between factors
+
+Un cop comprovades les interaccions entre variables i factors, procedim a fer el mateix entre factors.
+```{r}
+m10 <- glm(Y.bin ~ poly(age, 2) + education.num + poly(capital.gain,3) + capital.loss + 
+    poly(hours.per.week, 2) + f.rel * f.occ, family = binomial, 
+    data = dfwork)
+summary(m10)
+
+m11<-step(m10,k=log(nrow(dfwork)),trace = 0)
+#summary(m11)
+# Call:
+# glm(formula = Y.bin ~ poly(age, 2) + education.num + poly(capital.gain, 
+#     3) + capital.loss + poly(hours.per.week, 2) + f.rel, family = binomial, 
+#     data = dfwork)
+```
+Com podem veure, la comanda step ens indica que no es necessària cap interacció entre factors en el nostre model.
+
+# Model Validation
+
+Un cop aconseguit el millor model per explicar el target binari, necessitem validar-lo. Analitzarem una sèrie de gràfics per poder demostrar que el nostre model és el més adient:
+```{r}
+marginalModelPlots(m10)
+residualPlots(m10)
+res.ii<-influencePlot(m10,id=list(method="noteworthy",n=1))
+res.ii
+df[rownames(res.ii),]
+Boxplot(cooks.distance(m10)) #680 1034 2688
+
+# Influent data and lack of fit obs should be removed and model recalculated
+ll<-which(rownames(dfwork) %in% c("5398")) #--->680 el podem considerar outlier, poc comú
+mfi<-glm(Y.bin ~ poly(age, 2) + education.num + poly(capital.gain,3) + capital.loss + 
+    poly(hours.per.week, 2) + f.rel,family = binomial,data=dfwork[-ll,])
+summary(mfi)
+
+```
+Fent un cop d'ull als Residual plots, observem dues coses: que el capital.loss, al seu extrem dret perd la tendència plana, encara que sabem que aquesta variable és molt confusa i difícil d'explicar correctament. D'altra banda, el predictor presenta una paràbola que s'allunya molt del residu nul de Pearson. Les variables restants no presenten problemes significatius.
+
+Pel que fa als plots del model marginal, veiem que les dades s'ajusten perfectament al model, exceptuant hours per week, que pel cantó esquerre difereix una mica pero no massa.
+
+Finalment analitzarem dades influents i observacions que presenten una manca de "fit", amb l'influencePlot. Amb la opció "noteworthy", ens treuen per pantalla les observacions més influents. També ens ajuda fer un Boxplot de la distància de Cook. Si fem una ullada a l'individu 680 veiem que és molt jove (23 anys), i ja guanya més de 50K a l'any. A més, té un fill. Considerarem aquest individu com a outlier, l'eliminem, i generem ja el nostre model final.
+
+
+
+
+# Confusion table
+
+```{r}
+# Use your best model, once validated
+# Final model: mfi
+
+# Confusion table for work sample, using Final Model
+
+predict(mfi,type="response")[1:10]
+premfi<-factor(ifelse(predict(mfi,newdata=dfwork,type="response")<0.4,0,1),labels=c("pre-<50k","pred-+50k"))
+ttwk<-table(premfi,dfwork$Y.bin)
+perpc<-100*(sum(diag(ttwk))/nrow(dfwork));perpc
+
+m0<-glm(Y.bin~1,family=binomial,data=dfwork)
+predict(m0,type="response")[1:10]
+prem0<-factor(ifelse(predict(m0,type="response")<0.4,0,1),labels=c("pre-<50k"))
+ttwk0<-table(prem0,dfwork$Y.bin)
+perpc0<-100*(ttwk0[1,1]/nrow(dfwork));perpc0
+
+
+# Repeat for test sample
+# Confusion table for work sample, using Final Model
+
+names(dftest)[5] <- "education.num"
+predict(mfi,newdata=dftest,type="response")[1:10]
+premfitest<-factor(ifelse(predict(mfi,newdata=dftest,type="response")<0.5,0,1),labels=c("pre-<50k","pred-+50k"))
+ttwktest<-table(premfitest,dftest$Y.bin);ttwktest
+perpctest<-100*(sum(diag(ttwktest))/nrow(dftest));perpctest
+
+```
+Un cop desenvolupat i validat el nostre model final, és hora de mirar si realment funciona i és fiable. Ho farem mitjançant una taula de confusió, on compararem els resultats predits i els reals. La taxa d'encert o capacitat predictiva ve donada per la suma de la diagonal de la taula dividida entre el nombre d'observacions.
+
+El que hem fet també és comparar-ho amb un model nul, és a dir, amb el model més bàsic. El nostre model ens dona un 84,14% d'encerts respecte el 76,0% del model nul. Per tant, podem afirmar que el nostre model és un 8,14% millor que el model més simple.
+Provant el nostre model a dftest per comprovar realment la taxa d'encert obtenim una capacitat predictiva de 83,37%
+
+
+## Use ROC curve
+Finalment, observem que a les corbes de ROC que tenim un model bastant correcte, ja que s'ajusten als marges corresponents.
+```{r}
+# ROC Curve
+library("ROCR")
+dadesroc<-prediction(predict(mfi,newdata=dfwork,type="response"),dfwork$Y.bin)
+par(mfrow=c(1,2))
+plot(performance(dadesroc,"err"))
+plot(performance(dadesroc,"tpr","fpr"))
+abline(0,1,lty=2)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
